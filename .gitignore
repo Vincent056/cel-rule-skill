@@ -1,0 +1,6 @@
+# Local rule library data (created at runtime by the MCP server)
+rules-library/
+
+# Editor / OS noise
+*.swp
+.DS_Store
