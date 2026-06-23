@@ -1,4 +1,7 @@
-# Local rule library data (created at runtime by the MCP server)
+# Compiled celctl binary
+celctl/celctl
+
+# Local rule library data (created at runtime)
 rules-library/
 
 # Editor / OS noise

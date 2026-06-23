@@ -1,89 +1,36 @@
-# Tool-call payload reference
+# celctl reference — rule file format & commands
 
-Exact argument shapes for each MCP tool, copy-paste ready. Field names matter — the two
-verify tools use *different* input shapes.
+`celctl` replaces the cel-rpc-server MCP server. The rule JSON format is **compatible**
+with cel-rpc-server's `rules-library/*.json`, so existing files work unchanged.
 
-## verify_cel_with_tests  (no cluster)
-
-Inputs are nested under a `type` + `kubernetes`/`file`/`http` block. Test data is inline.
+## Rule file format
 
 ```json
 {
-  "expression": "namespaces.items.all(ns, networkpolicies.items.exists(np, np.metadata.namespace == ns.metadata.name))",
-  "inputs": [
-    {"name": "namespaces", "type": "kubernetes",
-     "kubernetes": {"version": "v1", "resource": "namespaces"}},
-    {"name": "networkpolicies", "type": "kubernetes",
-     "kubernetes": {"group": "networking.k8s.io", "version": "v1", "resource": "networkpolicies"}}
-  ],
-  "test_cases": [
-    {"description": "ns with matching netpol passes", "expected_result": true,
-     "inputs": {
-       "namespaces": {"items": [{"metadata": {"name": "app"}}]},
-       "networkpolicies": {"items": [{"metadata": {"name": "default-deny", "namespace": "app"}}]}
-     }},
-    {"description": "ns without netpol fails", "expected_result": false,
-     "inputs": {
-       "namespaces": {"items": [{"metadata": {"name": "app"}}]},
-       "networkpolicies": {"items": []}
-     }}
-  ]
-}
-```
-
-A `file` input instead of `kubernetes`:
-
-```json
-{"name": "cfg", "type": "file", "file": {"path": "/etc/app/config.yaml", "format": "yaml"}}
-```
-
-## verify_cel_live_resources  (needs kubeconfig)
-
-Input fields are **flat** — no `type`, no nested `kubernetes` block.
-
-```json
-{
-  "expression": "deployments.items.all(d, d.spec.replicas >= 2)",
-  "inputs": [
-    {"name": "deployments", "group": "apps", "version": "v1",
-     "resource": "deployments", "namespace": "production"}
-  ]
-}
-```
-
-## Discovery tools
-
-```json
-// discover_resource_types — usually no args, or scope by group
-{}
-
-// count_resources
-{"resource_type": "pods", "namespace": "default"}
-
-// get_resource_samples — pull real objects to model test data on
-{"resource_type": "configmaps", "namespace": "openshift-etcd", "max_samples": 3}
-```
-
-## add_rule  (save a validated rule)
-
-```json
-{
+  "id": "all-namespaces-network-policy",
   "name": "All Namespaces Network Policy Requirement",
   "description": "Every namespace must have at least one NetworkPolicy.",
   "expression": "namespaces.items.all(ns, networkpolicies.items.exists(np, np.metadata.namespace == ns.metadata.name))",
   "inputs": [
-    {"name": "namespaces", "type": "kubernetes",
-     "kubernetes": {"version": "v1", "resource": "namespaces"}},
-    {"name": "networkpolicies", "type": "kubernetes",
-     "kubernetes": {"group": "networking.k8s.io", "version": "v1", "resource": "networkpolicies"}}
+    {"name": "namespaces",      "kubernetes": {"version": "v1", "resource": "namespaces"}},
+    {"name": "networkpolicies", "kubernetes": {"group": "networking.k8s.io", "version": "v1", "resource": "networkpolicies"}}
   ],
   "category": "security",
   "severity": "high",
   "tags": ["network-security", "network-policy"],
   "test_cases": [
-    {"description": "ns with netpol", "expected_result": true,
-     "inputs": {"namespaces": {"items": [{"metadata": {"name": "app"}}]},
-                "networkpolicies": {"items": [{"metadata": {"namespace": "app"}}]}}}
+    {"description": "ns with matching netpol passes", "expected_result": true,
+     "test_data": {
+       "namespaces":      {"items": [{"metadata": {"name": "app"}}]},
+       "networkpolicies": {"items": [{"metadata": {"name": "deny", "namespace": "app"}}]}
+     }},
+    {"description": "ns without netpol fails", "expected_result": false,
+     "test_data": {
+       "namespaces":      {"items": [{"metadata": {"name": "app"}}]},
+       "networkpolicies": {"items": []}
+     }},
+    {"description": "no namespaces — vacuously true", "expected_result": true,
+     "test_data": {"namespaces": {"items": []}}}
   ],
   "metadata": {
     "compliance_framework": "CIS",
@@ -93,43 +40,82 @@ Input fields are **flat** — no `type`, no nested `kubernetes` block.
 }
 ```
 
-## list_rules / get_rule / test_rule / update_rule / remove_rule
+Notes:
+- `test_data` values may be an **inline JSON object** (above) *or* a **JSON string**
+  (cel-rpc-server's on-disk format, e.g. `"{\"items\":[...]}"`). celctl accepts both.
+- An input not present in a test case's `test_data` defaults to an empty List `{"items":[]}`.
+- `id` is optional for `rule add` (a slug is derived from `name` if omitted).
 
-```json
-// list_rules — all args optional
-{"category": "security", "severity": "high", "search_text": "network", "verified_only": true, "page_size": 20}
+## verify — evaluate against test cases (no cluster)
 
-// get_rule
-{"rule_id": "93ac685f-ff17-4b4d-b0bd-658732c92ff2"}
+```bash
+# whole rule file:
+celctl verify --rule myrule.json
 
-// test_rule — replay stored cases, or run live
-{"rule_id": "93ac685f-...", "test_mode": "test_cases"}
-{"rule_id": "93ac685f-...", "test_mode": "live"}
-
-// update_rule — rule_id + only the fields to change
-{"rule_id": "93ac685f-...", "severity": "critical", "expression": "<new expr>"}
-
-// remove_rule
-{"rule_id": "93ac685f-..."}
+# ad-hoc expression + a JSON array of test cases:
+celctl verify --expr 'pods.items.all(p, p.metadata.name != "")' --test cases.json
 ```
 
-## Saved-rule storage format (FileRuleStore, `./rules-library/<uuid>.json`)
-
-Note: stored `test_cases[].test_data` values are **JSON strings**, and the data is a
-List object. `add_rule`/`test_rule` accept the friendlier nested `inputs` form above and
-the server converts it.
+`cases.json` is just the `test_cases` array:
 
 ```json
-{
-  "id": "2ac55628-8557-4f40-81f2-1a82e8534686",
-  "name": "etcd_client_certificate_configured",
-  "expression": "etcd_configs.items.exists(config, config.data[\"pod.yaml\"].contains(\"--cert-file=\"))",
-  "inputs": [{"name": "etcd_configs", "kubernetes": {"version": "v1", "resource": "configmaps", "namespace": "openshift-etcd"}}],
-  "test_cases": [
-    {"description": "correct path", "expected_result": true,
-     "test_data": {"etcd_configs": "{\"items\":[{\"data\":{\"pod.yaml\":\"etcd --cert-file=...\"}}]}"}}
-  ],
-  "category": "security", "severity": "medium",
-  "metadata": {"compliance_framework": "CIS"}
-}
+[
+  {"description": "named ok", "expected_result": true,
+   "test_data": {"pods": {"items": [{"metadata": {"name": "x"}}]}}},
+  {"description": "empty name fails", "expected_result": false,
+   "test_data": {"pods": {"items": [{"metadata": {"name": ""}}]}}}
+]
 ```
+
+Output: per-case ✅/❌ and `N/M passed`. Exit code 0 only if all pass.
+
+## eval — evaluate once, print the boolean
+
+```bash
+echo '{"items":[{"spec":{"hostNetwork":true}}]}' > pods.json
+celctl eval --expr 'pods.items.filter(p, p.spec.hostNetwork == true).size() == 0' --data pods=pods.json
+# prints: false   (exit 1)
+```
+
+`--data name=path.json` is repeatable; each file is the List for that variable.
+
+## live — evaluate against the cluster (needs kubectl)
+
+```bash
+# from a rule file (uses its inputs' group/version/resource/namespace):
+celctl live --rule myrule.json
+
+# ad-hoc:
+celctl live --expr 'deployments.items.all(d, d.spec.replicas >= 2)' \
+            --input deployments=apps/v1/deployments:production
+```
+
+Input spec: `name=[group/]version/resource[:namespace]`
+- core type, all namespaces: `pods=v1/pods`
+- core type, one namespace:  `pods=v1/pods:default`
+- grouped type:              `deployments=apps/v1/deployments:production`
+
+celctl runs `kubectl get <resource>.<version>.<group> -o json` (with `-n ns` or `-A`),
+binds the result, evaluates, and prints fetched counts + ✅ PASS / ❌ FAIL.
+
+## discovery
+
+```bash
+celctl discover                              # kubectl api-resources --verbs=list -o wide
+celctl samples configmaps -n openshift-etcd --max 3   # real objects to model test data on
+```
+
+## rule library
+
+```bash
+celctl rule list                             # default dir ./rules-library
+celctl rule list --dir /path/to/lib --category security --tag etcd --search certificate
+celctl rule get <id-or-name>
+celctl rule add --file myrule.json           # validates test cases, refuses to save on failure
+celctl rule test <id> --mode test_cases      # replay stored cases (default)
+celctl rule test <id> --mode live            # run saved rule against the cluster
+celctl rule remove <id>
+```
+
+`--dir` may appear before or after the positional id. The default library dir is
+`./rules-library`.
