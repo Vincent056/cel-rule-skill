@@ -19,8 +19,55 @@ import (
 	"strings"
 
 	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/ext"
+	"github.com/google/cel-go/common/types"
+	"github.com/google/cel-go/common/types/ref"
+	"gopkg.in/yaml.v3"
 )
+
+// celEnvOptions returns the base CEL environment options used everywhere, kept
+// in lock-step with the Compliance Operator scanner: stdlib + parseJSON +
+// parseYAML. Variable declarations are appended by callers.
+func celEnvOptions() []cel.EnvOption {
+	mapStrDyn := cel.MapType(cel.StringType, cel.DynType)
+	return []cel.EnvOption{
+		cel.Function("parseJSON", cel.Overload("parseJSON_string",
+			[]*cel.Type{cel.StringType}, mapStrDyn, cel.UnaryBinding(parseJSONString))),
+		cel.Function("parseYAML", cel.Overload("parseYAML_string",
+			[]*cel.Type{cel.StringType}, mapStrDyn, cel.UnaryBinding(parseYAMLString))),
+	}
+}
+
+func parseJSONString(val ref.Val) ref.Val {
+	s, ok := val.Value().(string)
+	if !ok {
+		return types.NewErr("parseJSON: argument is not a string")
+	}
+	decoded := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(s), &decoded); err != nil {
+		return types.NewErr("parseJSON: %v", err)
+	}
+	r, err := types.NewRegistry()
+	if err != nil {
+		return types.NewErr("parseJSON: %v", err)
+	}
+	return types.NewDynamicMap(r, decoded)
+}
+
+func parseYAMLString(val ref.Val) ref.Val {
+	s, ok := val.Value().(string)
+	if !ok {
+		return types.NewErr("parseYAML: argument is not a string")
+	}
+	decoded := map[string]interface{}{}
+	if err := yaml.Unmarshal([]byte(s), &decoded); err != nil {
+		return types.NewErr("parseYAML: %v", err)
+	}
+	r, err := types.NewRegistry()
+	if err != nil {
+		return types.NewErr("parseYAML: %v", err)
+	}
+	return types.NewDynamicMap(r, decoded)
+}
 
 // newFlags returns a FlagSet that prints a contextual usage line on error.
 func newFlags(name string) *flag.FlagSet {
@@ -90,8 +137,14 @@ type Rule struct {
 // evalExpr compiles expr with the given variables declared as dynamic, then
 // evaluates it. The boolean result is returned. vars values must already be
 // decoded JSON (map[string]interface{}, []interface{}, float64, string, ...).
+//
+// The environment mirrors the Compliance Operator's CEL scanner
+// (compliance-sdk pkg/scanner): standard library plus the custom parseJSON /
+// parseYAML functions, with every input declared as a dynamic variable. No
+// extra string extensions are added, so an expression that compiles/evaluates
+// here behaves the same way it will in the operator.
 func evalExpr(expr string, vars map[string]interface{}) (bool, error) {
-	opts := []cel.EnvOption{ext.Strings()}
+	opts := celEnvOptions()
 	for name := range vars {
 		opts = append(opts, cel.Variable(name, cel.DynType))
 	}
@@ -692,6 +745,13 @@ Usage:
   celctl live     --rule rule.json                 Run against live cluster (kubectl)
   celctl live     --expr '<cel>' --input pods=v1/pods:default
   celctl rule list|get|add|test|remove [--dir ./rules-library]
+
+  ComplianceAsCode/content (cac-content) rules — operate on a rule dir or shared.yml:
+  celctl cac lint  <rule-dir>                       Compile + empty-eval; catches list/.items bugs
+  celctl cac test  <rule-dir> --cases cases.yaml    Unit-test against fixtures
+  celctl cac test  <rule-dir> --mock name=data.json [--expect true|false]
+  celctl cac live  <rule-dir>                        Evaluate against the cluster (kubectl)
+
   celctl discover                                  kubectl api-resources
   celctl samples  <resource> [-n ns] [--max N]     Sample objects from cluster
 
@@ -715,6 +775,8 @@ func main() {
 		code = cmdLive(args)
 	case "rule":
 		code = cmdRule(args)
+	case "cac":
+		code = cmdCac(args)
 	case "discover":
 		code = cmdDiscover(args)
 	case "samples":

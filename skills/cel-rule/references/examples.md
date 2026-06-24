@@ -119,3 +119,53 @@ celctl rule remove <id>
 
 `--dir` may appear before or after the positional id. The default library dir is
 `./rules-library`.
+
+## cac-content rules (`celctl cac …`)
+
+For rules in the ComplianceAsCode/content repo
+(`applications/<app>/<rule>/cel/shared.yml`). celctl binds inputs **exactly like the
+Compliance Operator scanner**:
+
+- input **with** `resource_name` → single object (`hco.spec...`)
+- input **without** `resource_name` → List wrapper `{items:[...]}` (`hcoList.items.all(...)`)
+
+```bash
+# lint: compile + smoke-eval, catches "iterating a list input without .items"
+celctl cac lint applications/openshift-virtualization/kubevirt-nonroot-feature-gate-is-enabled
+
+# unit-test against fixtures
+celctl cac test <rule-dir> --cases cases.yaml
+
+# one-shot with a single mock input
+celctl cac test <rule-dir> --mock hcoList=hco.yaml --expect true
+
+# evaluate against the live cluster (kubectl)
+celctl cac live <rule-dir>
+```
+
+Fixtures file (`cases.yaml`) — each input value is raw resource data; for a list input
+provide `{items:[...]}` (or a bare array), for a `resource_name` input provide the object:
+
+```yaml
+- name: nonRoot enabled -> compliant
+  expect: true
+  inputs:
+    hcoList:
+      items:
+        - metadata: {name: kubevirt-hyperconverged, namespace: openshift-cnv}
+          spec: {featureGates: {nonRoot: true}}
+- name: nonRoot false -> non-compliant
+  expect: false
+  inputs:
+    hcoList:
+      items:
+        - metadata: {name: kubevirt-hyperconverged, namespace: openshift-cnv}
+          spec: {featureGates: {nonRoot: false}}
+- name: no HCO present -> non-compliant (size != 1)
+  expect: false
+  inputs:
+    hcoList: {items: []}
+```
+
+celctl auto-discovers `<rule-dir>/cel/tests/*.yaml` (same format) when `--cases`/`--mock`
+are omitted, so fixtures can live alongside the rule.

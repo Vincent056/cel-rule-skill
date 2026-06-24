@@ -1,6 +1,6 @@
 ---
 name: cel-rule
-description: Author, validate, run, and manage Kubernetes CEL compliance rules with the local celctl utility — no server required. Use when the user wants to write a CEL expression/rule, test it against sample data or a live cluster, or add/list/test/remove rules in a local rule library.
+description: Author, validate, run, and manage Kubernetes CEL compliance rules with the local celctl utility — no server required. Use when the user wants to write a CEL expression/rule, test it against sample data or a live cluster, lint/unit-test ComplianceAsCode/content (cac-content) cel/shared.yml rules, or add/list/test/remove rules in a local rule library.
 ---
 
 # CEL Rule
@@ -46,6 +46,7 @@ cluster you want to check).
 | `get_rule` | `celctl rule get <id>` |
 | `test_rule` | `celctl rule test <id> [--mode test_cases\|live]` |
 | `remove_rule` | `celctl rule remove <id>` |
+| (cac-content rules) | `celctl cac lint\|test\|live <rule-dir>` — see Workflow D |
 
 The rule-library directory defaults to `./rules-library` (override with `--dir`). The rule
 JSON format is **compatible with cel-rpc-server's** files, so existing libraries work as-is.
@@ -108,6 +109,54 @@ Use when the user wants to know whether the *actual* cluster is compliant. Requi
 3. `celctl` prints how many items it fetched per input and a final ✅ PASS / ❌ FAIL
    (exit 0/1). If the result is surprising, `celctl samples` the resource and re-validate
    the expression in Workflow A against that real data before blaming the cluster.
+
+## Workflow D — Validate ComplianceAsCode/content (cac-content) rules
+
+Use this when the rules live in the **cac-content** repo as
+`applications/<app>/<rule>/cel/shared.yml` (the shipping format for out-of-the-box
+profiles). `celctl cac` understands that format natively and binds inputs **exactly like
+the Compliance Operator scanner**, so what passes here behaves the same in the operator.
+
+Binding semantics (critical — celctl mirrors the operator):
+- input **with** `resource_name` → bound to the **single object**; reference it directly
+  (`hco.spec.featureGates...`).
+- input **without** `resource_name` → bound to a **List wrapper** `{items:[...]}`; you
+  **must** iterate with `<name>.items.all(...)` / `.exists(...)` / `.filter(...)`.
+  Writing `<name>.all(...)` is the #1 bug — it iterates map keys and fails at runtime.
+
+1. **Lint** (fast smoke test — catches the list/`.items` mistake and compile errors):
+   ```bash
+   celctl cac lint applications/openshift-virtualization/kubevirt-nonroot-feature-gate-is-enabled
+   # lint a whole app dir:
+   for d in applications/openshift-virtualization/*/; do celctl cac lint "$d"; done
+   ```
+   A `❌ LINT FAILED: no such key` with the `.items` hint means a list input is being
+   iterated without `.items`. Fix the expression and re-lint.
+
+2. **Unit test** with fixtures (no cluster). Write a cases file and run `cac test`:
+   ```bash
+   celctl cac test <rule-dir> --cases cases.yaml
+   ```
+   `cases.yaml` is a list of `{name, expect, inputs}` where each input value is the raw
+   resource data (a List `{items:[...]}` for list inputs, or the object for
+   `resource_name` inputs — celctl normalizes either way). See
+   [references/examples.md](references/examples.md) for a full example. celctl also
+   auto-discovers `<rule-dir>/cel/tests/*.yaml` if you pass no `--cases`.
+
+   Quick one-shot instead of a cases file:
+   ```bash
+   celctl cac test <rule-dir> --mock hcoList=hco.yaml --expect true
+   ```
+
+3. **Run against the cluster** (needs `kubectl`):
+   ```bash
+   celctl cac live <rule-dir>
+   ```
+   celctl fetches each input via `kubectl get` (single object when `resource_name` is set,
+   else a List), evaluates, and prints ✅ PASS / ❌ FAIL with the rule's `failure_reason`.
+
+Always `cac lint` first, then add fixtures and `cac test` for real true/false coverage,
+then optionally `cac live` to check an actual cluster.
 
 ## Workflow C — Manage the rule library
 

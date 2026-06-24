@@ -34,9 +34,31 @@ celctl eval     --expr '<cel>' --data v=v.json    Evaluate once, print the boole
 celctl live     --rule rule.json                  Run against the live cluster (kubectl)
 celctl live     --expr '<cel>' --input pods=v1/pods:default
 celctl rule     list|get|add|test|remove [--dir ./rules-library]
+celctl cac      lint|test|live <rule-dir>         Validate ComplianceAsCode/content rules
 celctl discover                                   kubectl api-resources
 celctl samples  <resource> [-n ns] [--max N]      Sample objects to model test data on
 ```
+
+### Validating ComplianceAsCode/content (cac-content) rules
+
+`celctl cac` reads the shipping `applications/<app>/<rule>/cel/shared.yml` format and binds
+inputs **exactly like the Compliance Operator scanner** (single object when `resource_name`
+is set, else a `{items:[...]}` List wrapper). So a rule that passes here behaves the same in
+the operator.
+
+```bash
+# smoke-test every rule in an app — catches the common "iterate a list without .items" bug
+for d in applications/openshift-virtualization/*/; do celctl cac lint "$d"; done
+
+# unit-test with fixtures (no cluster)
+celctl cac test <rule-dir> --cases cases.yaml
+
+# evaluate against a real cluster
+celctl cac live <rule-dir>
+```
+
+The CEL environment matches the operator's `compliance-sdk` scanner exactly: standard
+library plus the custom `parseJSON` / `parseYAML` functions, every input declared dynamic.
 
 How it maps to the old MCP tools:
 

@@ -1,0 +1,25 @@
+- name: nonRoot enabled -> compliant
+  expect: true
+  inputs:
+    hcoList:
+      items:
+        - metadata: {name: kubevirt-hyperconverged, namespace: openshift-cnv}
+          spec: {featureGates: {nonRoot: true}}
+- name: nonRoot false -> non-compliant
+  expect: false
+  inputs:
+    hcoList:
+      items:
+        - metadata: {name: kubevirt-hyperconverged, namespace: openshift-cnv}
+          spec: {featureGates: {nonRoot: false}}
+- name: featureGates missing -> non-compliant
+  expect: false
+  inputs:
+    hcoList:
+      items:
+        - metadata: {name: kubevirt-hyperconverged, namespace: openshift-cnv}
+          spec: {}
+- name: no HCO present -> non-compliant (size != 1)
+  expect: false
+  inputs:
+    hcoList: {items: []}
