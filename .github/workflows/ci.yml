@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: celctl/go.mod
+          cache-dependency-path: celctl/go.sum
       - name: Build
         run: go build ./...
       - name: Vet

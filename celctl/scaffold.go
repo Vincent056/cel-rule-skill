@@ -40,6 +40,7 @@ type fixtureFile struct {
 func cacScaffold(args []string) int {
 	fs := newFlags("cac scaffold")
 	fromCluster := fs.Bool("from-cluster", false, "seed fixtures from live objects fetched via each input's kubernetes_input_spec (kubectl)")
+	keepStatus := fs.Bool("keep-status", false, "keep .status in fetched objects (deep-stripped of uid/resourceVersion); default drops it")
 	force := fs.Bool("force", false, "overwrite an existing scaffolded fixtures file")
 	maxItems := fs.Int("max-items", 3, "cap the number of fetched items per list input")
 	fs.Parse(reorderArgs(args))
@@ -72,7 +73,7 @@ func cacScaffold(args []string) int {
 			if err != nil {
 				return fail("fetch %q: %v (no cluster? rerun without --from-cluster for an offline skeleton)", in.Name, err)
 			}
-			data = capListItems(in.normalizeBinding(sanitizeObject(data)), *maxItems)
+			data = capListItems(in.normalizeBinding(sanitizeObject(data, *keepStatus)), *maxItems)
 			seed[in.Name] = data
 			prov.SourceAPIVersions[in.Name] = servedAPIVersion(data, in.Spec)
 			fmt.Printf("  fetched %s (%s)\n", in.Name, describeBinding(data))
@@ -127,17 +128,27 @@ func cacScaffold(args []string) int {
 }
 
 // sanitizeObject strips server-managed noise from a fetched object (and each
-// item of a fetched List) so fixtures stay small and stable.
-func sanitizeObject(v interface{}) interface{} {
+// item of a fetched List) so fixtures stay small and stable. status is dropped
+// unless keepStatus is set (rules rarely read it, and e.g. HyperConverged's
+// status.relatedObjects carries uid/resourceVersion for every related object);
+// when kept it is deep-stripped of uid/resourceVersion.
+func sanitizeObject(v interface{}, keepStatus bool) interface{} {
 	m, ok := v.(map[string]interface{})
 	if !ok {
 		return v
 	}
 	if items, ok := m["items"].([]interface{}); ok {
 		for i, it := range items {
-			items[i] = sanitizeObject(it)
+			items[i] = sanitizeObject(it, keepStatus)
 		}
+		// The List wrapper's own metadata is pure noise (resourceVersion only).
+		delete(m, "metadata")
 		return m
+	}
+	if !keepStatus {
+		delete(m, "status")
+	} else if st, ok := m["status"]; ok {
+		m["status"] = deepStripKeys(st, "uid", "resourceVersion", "managedFields")
 	}
 	if md, ok := m["metadata"].(map[string]interface{}); ok {
 		for _, k := range []string{
@@ -154,6 +165,27 @@ func sanitizeObject(v interface{}) interface{} {
 		}
 	}
 	return m
+}
+
+// deepStripKeys removes the named keys from every map at any depth.
+func deepStripKeys(v interface{}, keys ...string) interface{} {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		for _, k := range keys {
+			delete(x, k)
+		}
+		for k, val := range x {
+			x[k] = deepStripKeys(val, keys...)
+		}
+		return x
+	case []interface{}:
+		for i, val := range x {
+			x[i] = deepStripKeys(val, keys...)
+		}
+		return x
+	default:
+		return v
+	}
 }
 
 // capListItems truncates a List binding to at most n items.
@@ -191,13 +223,17 @@ func servedAPIVersion(v interface{}, spec cacInputSpec) string {
 // only, never cluster-identifiable data. Failures degrade to empty strings.
 func clusterVersions() (k8s, ocp string) {
 	if out, err := runKubectl("version", "-o", "json"); err == nil {
-		var v struct {
-			ServerVersion struct {
-				GitVersion string `json:"gitVersion"`
-			} `json:"serverVersion"`
-		}
-		if json.Unmarshal([]byte(out), &v) == nil {
-			k8s = v.ServerVersion.GitVersion
+		// kubectl mixes warnings into combined output; parse from the first '{'.
+		if i := strings.Index(out, "{"); i >= 0 {
+			var v struct {
+				ServerVersion struct {
+					GitVersion string `json:"gitVersion"`
+				} `json:"serverVersion"`
+			}
+			// Decode (not Unmarshal): kubectl may append warnings after the JSON.
+			if json.NewDecoder(strings.NewReader(out[i:])).Decode(&v) == nil {
+				k8s = v.ServerVersion.GitVersion
+			}
 		}
 	}
 	if out, err := runKubectl("get", "clusterversion", "version",

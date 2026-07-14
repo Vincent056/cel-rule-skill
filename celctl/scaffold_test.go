@@ -91,8 +91,16 @@ func TestSanitizeObject(t *testing.T) {
 			},
 		},
 		"spec": map[string]interface{}{"featureGates": map[string]interface{}{"nonRoot": true}},
+		"status": map[string]interface{}{
+			"relatedObjects": []interface{}{map[string]interface{}{
+				"name": "x", "uid": "deadbeef", "resourceVersion": "42",
+			}},
+		},
 	}
-	got := sanitizeObject(obj).(map[string]interface{})
+	got := sanitizeObject(obj, false).(map[string]interface{})
+	if _, ok := got["status"]; ok {
+		t.Fatal("status should be dropped by default")
+	}
 	md := got["metadata"].(map[string]interface{})
 	for _, k := range []string{"uid", "resourceVersion", "generation", "creationTimestamp", "managedFields"} {
 		if _, ok := md[k]; ok {
@@ -112,9 +120,25 @@ func TestSanitizeObject(t *testing.T) {
 	if got["spec"].(map[string]interface{})["featureGates"] == nil {
 		t.Fatal("sanitize dropped spec")
 	}
+	// keep-status: status retained but deep-stripped of uid/resourceVersion
+	obj2 := map[string]interface{}{
+		"status": map[string]interface{}{
+			"relatedObjects": []interface{}{map[string]interface{}{
+				"name": "x", "uid": "deadbeef", "resourceVersion": "42",
+			}},
+		},
+	}
+	kept := sanitizeObject(obj2, true).(map[string]interface{})
+	ro := kept["status"].(map[string]interface{})["relatedObjects"].([]interface{})[0].(map[string]interface{})
+	if _, ok := ro["uid"]; ok {
+		t.Fatal("keep-status should deep-strip uid")
+	}
+	if ro["name"] != "x" {
+		t.Fatal("keep-status dropped a real field")
+	}
 	// List form: items sanitized too
 	list := map[string]interface{}{"items": []interface{}{obj}}
-	slist := sanitizeObject(list).(map[string]interface{})
+	slist := sanitizeObject(list, false).(map[string]interface{})
 	item0 := slist["items"].([]interface{})[0].(map[string]interface{})
 	if _, ok := item0["metadata"].(map[string]interface{})["uid"]; ok {
 		t.Fatal("sanitize skipped List items")
