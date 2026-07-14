@@ -1,29 +1,47 @@
 # cel-rule-skill
 
-A [Claude Code](https://claude.com/claude-code) skill **and** a self-contained CLI for
-authoring, validating, running, and managing **Kubernetes CEL compliance rules** — with
+A [Claude Code](https://claude.com/claude-code) skill **and** a self-contained CLI (`celctl`)
+for authoring, validating, and running **Kubernetes CEL compliance rules** — with
 **no server required**.
 
 This replaces the [`cel-rpc-server`](https://github.com/Vincent056/cel-rpc-server) MCP
-server. Instead of running a container and talking to it over MCP, the work is done by a
-small local Go utility, `celctl`, that evaluates CEL with the same engine (cel-go), runs
-rules against a live cluster via `kubectl`. Rules themselves live in the
+server. The work is done by a small local Go utility, `celctl`, that evaluates CEL with
+the same engine the Compliance Operator scanner uses (cel-go), and runs rules against a
+live cluster via `kubectl`. Rules themselves live in the
 ComplianceAsCode/content repo (`applications/<app>/<rule>/cel/shared.yml`).
 
-## What's in here
+## Install
 
+The Claude Code skill is embedded in the `celctl` binary — two commands install both:
+
+```bash
+go install github.com/Vincent056/cel-rule-skill/celctl@latest
+celctl skill install        # writes the skill to ~/.claude/skills/cel-rule
 ```
-celctl/                        # the utility (replaces the MCP server)
-  main.go, cac.go              #   verify / eval / live / discover / samples / cac
-  go.mod, go.sum
-  skill/                       # the Claude Code skill, embedded in the binary
-    SKILL.md                   #   workflows for create / validate / run
-    references/
-      cel-cookbook.md          #   CEL syntax patterns (verified against cel-go)
-      examples.md              #   rule-file format + every celctl command
-scripts/
-  build.sh                    # build (and optionally install) celctl
+
+Restart Claude Code to pick the skill up. `celctl skill status` shows the installed
+skill version vs the binary's.
+
+Live-cluster commands additionally need `kubectl` configured for the target cluster.
+Local `verify`/`eval`/`cac test` need nothing else — no server, no container, no AI keys.
+
+### Updating
+
+Tool and skill update together; managed skill installs refresh in place:
+
+```bash
+go install github.com/Vincent056/cel-rule-skill/celctl@latest
+celctl skill install
 ```
+
+### Alternative: from a clone
+
+```bash
+./scripts/build.sh --install                        # build celctl to ~/.local/bin
+ln -s "$PWD/celctl/skill" ~/.claude/skills/cel-rule  # skill tracks your checkout
+```
+
+(`celctl skill install --force` replaces such a symlink with a managed copy.)
 
 ## celctl — the utility
 
@@ -71,45 +89,6 @@ How it maps to the old MCP tools:
 | `discover_resource_types` | `celctl discover` |
 | `get_resource_samples` | `celctl samples` |
 
-## Setup
-
-### 1. Build celctl (one-time, needs Go 1.21+)
-
-```bash
-./scripts/build.sh --install     # builds and copies to ~/.local/bin
-# or just: cd celctl && go build -o celctl .
-# or, without cloning:
-go install github.com/Vincent056/cel-rule-skill/celctl@latest
-```
-
-Live-cluster commands additionally need `kubectl` configured for the target cluster.
-Local `verify`/`eval` need nothing else — no server, no container, no cluster, no AI keys.
-
-### 2. Install the skill
-
-The skill is embedded in the binary — one command installs it into
-`~/.claude/skills/cel-rule` (use `--dir` to override):
-
-```bash
-celctl skill install
-```
-
-Restart Claude Code to pick it up. `celctl skill status` shows the installed
-version vs the binary's.
-
-### Updating
-
-Both the tool and the skill update together:
-
-```bash
-go install github.com/Vincent056/cel-rule-skill/celctl@latest
-celctl skill install       # refreshes the managed skill directory in place
-```
-
-(Working from a clone instead? `ln -s "$PWD/celctl/skill" ~/.claude/skills/cel-rule`
-keeps the skill tracking your checkout; `skill install --force` replaces such a
-symlink with a managed copy.)
-
 ## Usage
 
 Ask Claude, e.g.:
@@ -127,6 +106,21 @@ Or use the CLI directly:
 celctl cac test applications/openshift-virtualization/kubevirt-nonroot-feature-gate-is-enabled
 celctl live --expr 'deployments.items.all(d, d.spec.replicas >= 2)' \
             --input deployments=apps/v1/deployments:production
+```
+
+## Repo layout
+
+```
+celctl/                        # the utility (replaces the MCP server)
+  main.go, cac.go              #   verify / eval / live / discover / samples / cac
+  scaffold.go, skill.go        #   fixture scaffolding, embedded-skill installer
+  skill/                       # the Claude Code skill, embedded in the binary
+    SKILL.md                   #   workflows for create / validate / run
+    references/
+      cel-cookbook.md          #   CEL syntax patterns (verified against cel-go)
+      examples.md              #   rule-file format + every celctl command
+scripts/
+  build.sh                     # build (and optionally install) celctl from a clone
 ```
 
 ## Notes

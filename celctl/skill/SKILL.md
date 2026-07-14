@@ -17,18 +17,18 @@ live cluster via `kubectl`. Rules themselves live in the ComplianceAsCode/conten
 > (`verify`/`eval`/`live`). Hand-reasoning about CEL semantics is unreliable; `celctl` is
 > the source of truth.
 
-## Prerequisite: build celctl once
+## Prerequisite: celctl on PATH
 
-The skill assumes a `celctl` binary exists. If `celctl` (or `$CELCTL`) isn't on PATH,
-build it from this repo:
+The skill assumes a `celctl` binary exists (check `celctl --help`, or `$CELCTL`). If it
+is missing, install it:
 
 ```bash
-cd <this-repo>/celctl && go build -o celctl .      # produces ./celctl
-# optional: install it
-cp celctl ~/.local/bin/        # or anywhere on PATH
+go install github.com/Vincent056/cel-rule-skill/celctl@latest
+# from a clone instead: cd <repo>/celctl && go build -o celctl . && cp celctl ~/.local/bin/
 ```
 
-Throughout, invoke it as `celctl` if installed, else `<repo>/celctl/celctl`.
+To update both the tool and this skill:
+`go install github.com/Vincent056/cel-rule-skill/celctl@latest && celctl skill install`.
 Live-cluster commands additionally require a working `kubectl` (current context = the
 cluster you want to check).
 
