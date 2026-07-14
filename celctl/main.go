@@ -1,11 +1,12 @@
 // celctl — a self-contained CEL rule utility for Kubernetes compliance checks.
 //
-// Replaces the cel-rpc-server MCP server for the create/validate/run/manage loop:
-//   - evaluates CEL locally with cel-go (the same engine the server used)
+// Replaces the cel-rpc-server MCP server for the create/validate/run loop:
+//   - evaluates CEL locally with cel-go (the same engine the scanner uses)
 //   - runs rules against a live cluster via kubectl
-//   - manages a file-based rule library (compatible with cel-rpc-server's format)
+//   - validates ComplianceAsCode/content rules natively (see cac.go)
 //
-// No server, no container, no AI keys.
+// Rules live in the ComplianceAsCode/content repo. No server, no container,
+// no AI keys.
 package main
 
 import (
@@ -75,7 +76,7 @@ func newFlags(name string) *flag.FlagSet {
 
 // reorderArgs moves positional args to the end so flags may appear after them.
 // Go's flag package stops at the first non-flag token; this lets users write
-// `rule test <id> --dir x` as well as `rule test --dir x <id>`. Assumes flags
+// `cac test <dir> --cases x` as well as `cac test --cases x <dir>`. Assumes flags
 // take values in `--flag value` or `--flag=value` form (no standalone bools).
 func reorderArgs(args []string) []string {
 	var flags, pos []string
@@ -249,19 +250,19 @@ func cmdVerify(args []string) int {
 		}
 		vars, err := decodeTestData(tc.TestData, rule.Inputs)
 		if err != nil {
-			fmt.Printf("  ❌ %s — bad test data: %v\n", desc, err)
+			fmt.Printf("  FAIL %s — bad test data: %v\n", desc, err)
 			continue
 		}
 		got, err := evalExpr(rule.Expression, vars)
 		if err != nil {
-			fmt.Printf("  ❌ %s — %v\n", desc, err)
+			fmt.Printf("  FAIL %s — %v\n", desc, err)
 			continue
 		}
 		if got == tc.ExpectedResult {
 			pass++
-			fmt.Printf("  ✅ %s — got %v (expected %v)\n", desc, got, tc.ExpectedResult)
+			fmt.Printf("  PASS %s — got %v (expected %v)\n", desc, got, tc.ExpectedResult)
 		} else {
-			fmt.Printf("  ❌ %s — got %v, expected %v\n", desc, got, tc.ExpectedResult)
+			fmt.Printf("  FAIL %s — got %v, expected %v\n", desc, got, tc.ExpectedResult)
 		}
 	}
 	fmt.Printf("\n%d/%d passed\n", pass, total)
@@ -359,10 +360,10 @@ func cmdLive(args []string) int {
 		return fail("%v", err)
 	}
 	if got {
-		fmt.Printf("\n✅ PASS — cluster satisfies the expression\n")
+		fmt.Printf("\nPASS PASS — cluster satisfies the expression\n")
 		return 0
 	}
-	fmt.Printf("\n❌ FAIL — cluster does not satisfy the expression\n")
+	fmt.Printf("\nFAIL FAIL — cluster does not satisfy the expression\n")
 	return 1
 }
 

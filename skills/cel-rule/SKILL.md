@@ -77,7 +77,7 @@ or run it live.
                  --test cases.json
    ```
 
-5. **Read the result.** `celctl` prints per-case ✅/❌ and `N/M passed`, exiting non-zero
+5. **Read the result.** `celctl` prints per-case PASS/FAIL and `N/M passed`, exiting non-zero
    if any case fails. If a case is wrong, decide whether the *expression* or the
    *expected_result* is mistaken, fix, and re-run. Mind the empty-list case: `all()` over
    `[]` is `true`, `exists()` over `[]` is `false` — make it match your intent.
@@ -102,7 +102,7 @@ Use when the user wants to know whether the *actual* cluster is compliant. Requi
    ```
    Input spec is `name=[group/]version/resource[:namespace]`; omit `:namespace` to query
    all namespaces (`-A`).
-3. `celctl` prints how many items it fetched per input and a final ✅ PASS / ❌ FAIL
+3. `celctl` prints how many items it fetched per input and a final PASS / FAIL
    (exit 0/1). If the result is surprising, `celctl samples` the resource and re-validate
    the expression in Workflow A against that real data before blaming the cluster.
 
@@ -126,9 +126,9 @@ Binding semantics (critical — celctl mirrors the operator):
    # lint a whole app dir:
    for d in applications/openshift-virtualization/*/; do celctl cac lint "$d"; done
    ```
-   A `❌ LINT FAILED: input "<name>" is a list … but the expression iterates it directly`
+   A `LINT FAILED: input "<name>" is a list … but the expression iterates it directly`
    means a list input is being iterated without `.items`. Fix the expression and re-lint.
-   A `⚠️ unguarded field access` warning is not a failure — it means a missing field
+   An `unguarded field access` warning is not a failure — it means a missing field
    would make the scanner report FAIL; add `has()` guards if absence should be compliant.
    Note on semantics: `cac test`/`cac live` mirror the scanner — a `no such key` eval
    error counts as **FAIL** (with a warning), not an execution error.
@@ -167,7 +167,7 @@ Binding semantics (critical — celctl mirrors the operator):
    celctl cac live <rule-dir>
    ```
    celctl fetches each input via `kubectl get` (single object when `resource_name` is set,
-   else a List), evaluates, and prints ✅ PASS / ❌ FAIL with the rule's `failure_reason`.
+   else a List), evaluates, and prints PASS / FAIL with the rule's `failure_reason`.
 
 Always `cac lint` first, then add fixtures and `cac test` for real true/false coverage,
 then optionally `cac live` to check an actual cluster.
@@ -180,7 +180,7 @@ then optionally `cac live` to check an actual cluster.
   back it up. Quote the `N/M passed` line.
 - Test data must be a List: `{"items":[...]}`. A bare object (no `items`) will not iterate.
 - Guard optional fields with `has(x.field)` before dereferencing — a missing map key or
-  field raises an eval error (surfaced as ❌ for that case).
+  field raises an eval error (surfaced as for that case).
 - For `live`, the expression must be List-form; everything comes back wrapped in `items`.
 
 See [references/cel-cookbook.md](references/cel-cookbook.md) for CEL syntax patterns and

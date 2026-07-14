@@ -122,7 +122,7 @@ func cacScaffold(args []string) int {
 	}
 	fmt.Printf("wrote %s (%d cases)\n", outPath, len(ff.Cases))
 	if *fromCluster {
-		fmt.Println("⚠️  review the fixture for cluster-identifiable values before committing")
+		fmt.Println("NOTE: review the fixture for cluster-identifiable values before committing")
 	}
 	return 0
 }

@@ -220,7 +220,7 @@ func cacLint(args []string) int {
 	misused := false
 	for _, in := range rule.Inputs {
 		if in.Spec.ResourceName == "" && listMisusePattern(rule.Expression, in.Name) {
-			fmt.Printf("\n❌ LINT FAILED: input %q is a list (no resource_name) but the expression iterates it directly.\n", in.Name)
+			fmt.Printf("\nLINT FAILED: input %q is a list (no resource_name) but the expression iterates it directly.\n", in.Name)
 			fmt.Printf("   Use %s.items.all(...) / .exists(...) / .filter(...), not %s.all(...).\n", in.Name, in.Name)
 			misused = true
 		}
@@ -236,20 +236,20 @@ func cacLint(args []string) int {
 	_, err = evalExpr(rule.Expression, vars)
 	switch {
 	case err == nil:
-		fmt.Printf("\n✅ compiles & evaluates (empty-cluster result is vacuous). Add fixtures with `cac test` for real coverage.\n")
+		fmt.Printf("\nOK: compiles & evaluates (empty-cluster result is vacuous). Add fixtures with `cac test` for real coverage.\n")
 		return 0
 	case strings.HasPrefix(err.Error(), "compile:"):
-		fmt.Printf("\n❌ LINT FAILED: %v\n", err)
+		fmt.Printf("\nLINT FAILED: %v\n", err)
 		return 1
 	case isNoSuchKeyErr(err):
 		// Deep field access on the empty skeleton. Legal in the operator: the
 		// scanner maps a `no such key` eval error to FAIL, not an error.
-		fmt.Printf("\n✅ compiles. ⚠️  unguarded field access (%v): on a cluster where the field is\n", err)
+		fmt.Printf("\nOK: compiles. WARNING: unguarded field access (%v): on a cluster where the field is\n", err)
 		fmt.Println("   absent the scanner reports FAIL — add has() guards if absence should be compliant.")
 		fmt.Println("   Add fixtures with `cac test` for real coverage.")
 		return 0
 	default:
-		fmt.Printf("\n❌ LINT FAILED: %v\n", err)
+		fmt.Printf("\nLINT FAILED: %v\n", err)
 		return 1
 	}
 }
@@ -300,17 +300,17 @@ func cacTest(args []string) int {
 			return fail("%v", err)
 		}
 		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
-		fmt.Printf("⚠️  eval error %q — the scanner maps this to FAIL\n", err)
+		fmt.Printf("WARNING: eval error %q — the scanner maps this to FAIL\n", err)
 		got = false
 	}
 	fmt.Printf("%v\n", got)
 	if *expect != "" {
 		want := *expect == "true"
 		if got != want {
-			fmt.Printf("❌ expected %v, got %v\n", want, got)
+			fmt.Printf("FAIL: expected %v, got %v\n", want, got)
 			return 1
 		}
-		fmt.Printf("✅ matches expected %v\n", want)
+		fmt.Printf("OK: matches expected %v\n", want)
 		return 0
 	}
 	if !got {
@@ -358,7 +358,7 @@ func cacRunCaseDir(rule *cacRule, dir string) int {
 		}
 		cases, err := loadCases(filepath.Join(dir, e.Name()))
 		if err != nil {
-			fmt.Printf("  ❌ %s: %v\n", e.Name(), err)
+			fmt.Printf("  FAIL %s: %v\n", e.Name(), err)
 			continue
 		}
 		for _, c := range cases {
@@ -409,7 +409,7 @@ func runOneCase(rule *cacRule, c cacCase) bool {
 		if !ok {
 			// A typo'd input name would silently leave the real input empty and
 			// make the case vacuous — fail loudly instead.
-			fmt.Printf("  ❌ %s — fixture input %q matches no rule input (rule inputs: %s)\n",
+			fmt.Printf("  FAIL %s — fixture input %q matches no rule input (rule inputs: %s)\n",
 				name, inName, strings.Join(inputNames, ", "))
 			return false
 		}
@@ -418,18 +418,18 @@ func runOneCase(rule *cacRule, c cacCase) bool {
 	got, err := evalExpr(rule.Expression, vars)
 	if err != nil {
 		if !isNoSuchKeyErr(err) {
-			fmt.Printf("  ❌ %s — %v\n", name, err)
+			fmt.Printf("  FAIL %s — %v\n", name, err)
 			return false
 		}
 		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
-		fmt.Printf("  ⚠️  %s — eval error %q; the scanner maps this to FAIL\n", name, err)
+		fmt.Printf("  WARNING: %s — eval error %q; the scanner maps this to FAIL\n", name, err)
 		got = false
 	}
 	if got == c.Expect {
-		fmt.Printf("  ✅ %s — %v\n", name, got)
+		fmt.Printf("  PASS %s — %v\n", name, got)
 		return true
 	}
-	fmt.Printf("  ❌ %s — got %v, expected %v\n", name, got, c.Expect)
+	fmt.Printf("  FAIL %s — got %v, expected %v\n", name, got, c.Expect)
 	return false
 }
 
@@ -460,14 +460,14 @@ func cacLive(args []string) int {
 			return fail("%v", err)
 		}
 		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
-		fmt.Printf("  ⚠️  eval error %q — the scanner maps this to FAIL\n", err)
+		fmt.Printf("  WARNING: eval error %q — the scanner maps this to FAIL\n", err)
 		got = false
 	}
 	if got {
-		fmt.Printf("\n✅ PASS (compliant)\n")
+		fmt.Printf("\nPASS (compliant)\n")
 		return 0
 	}
-	fmt.Printf("\n❌ FAIL (non-compliant)\n")
+	fmt.Printf("\nFAIL (non-compliant)\n")
 	if rule.FailureReason != "" {
 		fmt.Printf("   %s\n", strings.TrimSpace(rule.FailureReason))
 	}

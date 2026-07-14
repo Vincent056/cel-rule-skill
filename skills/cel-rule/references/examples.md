@@ -66,7 +66,7 @@ celctl verify --expr 'pods.items.all(p, p.metadata.name != "")' --test cases.jso
 ]
 ```
 
-Output: per-case ✅/❌ and `N/M passed`. Exit code 0 only if all pass.
+Output: per-case PASS/FAIL and `N/M passed`. Exit code 0 only if all pass.
 
 ## eval — evaluate once, print the boolean
 
@@ -95,7 +95,7 @@ Input spec: `name=[group/]version/resource[:namespace]`
 - grouped type:              `deployments=apps/v1/deployments:production`
 
 celctl runs `kubectl get <resource>.<version>.<group> -o json` (with `-n ns` or `-A`),
-binds the result, evaluates, and prints fetched counts + ✅ PASS / ❌ FAIL.
+binds the result, evaluates, and prints fetched counts + PASS / FAIL.
 
 ## discovery
 
