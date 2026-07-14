@@ -153,3 +153,37 @@ provide `{items:[...]}` (or a bare array), for a `resource_name` input provide t
 
 celctl auto-discovers `<rule-dir>/cel/tests/*.yaml` (same format) when `--cases`/`--mock`
 are omitted, so fixtures can live alongside the rule.
+
+## scaffolding fixtures (`celctl cac scaffold`)
+
+Never hand-invent resource shapes — schemas change across versions (HyperConverged
+`featureGates` is an object on v1beta1 but an array on v1; `nonRoot` was removed in
+4.18+). Seed fixtures from real objects:
+
+```bash
+# with a cluster: fetch each input via the rule's own kubernetes_input_spec,
+# sanitize (managedFields/uid/resourceVersion/... stripped), stamp provenance
+celctl cac scaffold <rule-dir> --from-cluster
+
+# without a cluster: binding-shaped skeleton, provenance marked as such
+celctl cac scaffold <rule-dir>
+```
+
+Output is the wrapper fixture format (bare-list files remain valid):
+
+```yaml
+provenance:
+  fetched_with: celctl cac scaffold --from-cluster
+  date: "2026-07-14"
+  openshift_version: 4.21.0          # versions only — never cluster-identifiable info
+  kubernetes_version: v1.35.3
+  source_api_versions:
+    hcoList: hco.kubevirt.io/v1beta1  # the shape the cluster actually served
+cases:
+  - name: ...
+    expect: true
+    inputs: { ... }
+```
+
+Fill the TODO cases (mutate only the interesting field), then `celctl cac test <rule-dir>`.
+Review fixtures for cluster-identifiable values before committing — versions are OK.

@@ -133,7 +133,21 @@ Binding semantics (critical — celctl mirrors the operator):
    Note on semantics: `cac test`/`cac live` mirror the scanner — a `no such key` eval
    error counts as **FAIL** (with a warning), not an execution error.
 
-2. **Unit test** with fixtures (no cluster). Write a cases file and run `cac test`:
+2. **Scaffold fixtures — never hand-invent resource shapes.** Schemas change across
+   versions (HyperConverged `featureGates` is an object on v1beta1 but an array on v1;
+   `nonRoot` was removed in 4.18+), so a hand-written shape may not match what the API
+   serves. With a cluster available, always seed from real objects:
+   ```bash
+   celctl cac scaffold <rule-dir> --from-cluster   # real objects, sanitized, provenance-stamped
+   celctl cac scaffold <rule-dir>                  # no cluster: skeleton, provenance says so
+   ```
+   The generated `cel/tests/cases.yaml` records **provenance** (fetch date, OpenShift/
+   Kubernetes versions, the apiVersion actually served per input — versions only, never
+   cluster-identifiable info). Fill the TODO cases by mutating only the interesting field.
+   Fixture checklist: compliant case, non-compliant case, empty/absent edge case,
+   provenance present, `source_api_versions` matches the rule's input spec.
+
+3. **Unit test** with fixtures (no cluster). Write a cases file and run `cac test`:
    ```bash
    celctl cac test <rule-dir> --cases cases.yaml
    ```
@@ -148,7 +162,7 @@ Binding semantics (critical — celctl mirrors the operator):
    celctl cac test <rule-dir> --mock hcoList=hco.yaml --expect true
    ```
 
-3. **Run against the cluster** (needs `kubectl`):
+4. **Run against the cluster** (needs `kubectl`):
    ```bash
    celctl cac live <rule-dir>
    ```

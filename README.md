@@ -33,7 +33,7 @@ celctl verify   --expr '<cel>' --test cases.json  Run ad-hoc test cases
 celctl eval     --expr '<cel>' --data v=v.json    Evaluate once, print the boolean
 celctl live     --rule rule.json                  Run against the live cluster (kubectl)
 celctl live     --expr '<cel>' --input pods=v1/pods:default
-celctl cac      lint|test|live <rule-dir>         Validate ComplianceAsCode/content rules
+celctl cac      lint|test|live|scaffold <rule-dir> Validate ComplianceAsCode/content rules
 celctl discover                                   kubectl api-resources
 celctl samples  <resource> [-n ns] [--max N]      Sample objects to model test data on
 ```
@@ -48,6 +48,9 @@ the operator.
 ```bash
 # smoke-test every rule in an app — catches the common "iterate a list without .items" bug
 for d in applications/openshift-virtualization/*/; do celctl cac lint "$d"; done
+
+# scaffold fixtures from REAL cluster objects (sanitized, provenance-stamped)
+celctl cac scaffold <rule-dir> --from-cluster
 
 # unit-test with fixtures (no cluster)
 celctl cac test <rule-dir> --cases cases.yaml

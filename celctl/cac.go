@@ -72,6 +72,8 @@ func cmdCac(args []string) int {
 		return cacTest(rest)
 	case "live":
 		return cacLive(rest)
+	case "scaffold":
+		return cacScaffold(rest)
 	default:
 		return fail("unknown cac subcommand: %s", sub)
 	}
@@ -528,19 +530,24 @@ func loadStructured(path string) (interface{}, error) {
 	return normalizeYAML(v), nil
 }
 
+// loadCases reads a fixtures file in either format: a bare list of cases, or
+// the wrapper form {provenance: {...}, cases: [...]} written by cac scaffold.
 func loadCases(path string) ([]cacCase, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var cases []cacCase
+	unmarshal := yaml.Unmarshal
 	if hasAnySuffix(path, ".json") {
-		err = json.Unmarshal(b, &cases)
-	} else {
-		err = yaml.Unmarshal(b, &cases)
+		unmarshal = func(data []byte, v interface{}) error { return json.Unmarshal(data, v) }
 	}
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	var cases []cacCase
+	if err := unmarshal(b, &cases); err != nil {
+		var ff fixtureFile
+		if werr := unmarshal(b, &ff); werr != nil || len(ff.Cases) == 0 {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		cases = ff.Cases
 	}
 	for i := range cases {
 		cases[i].Inputs = normalizeYAMLMap(cases[i].Inputs)

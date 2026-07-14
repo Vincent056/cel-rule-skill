@@ -514,6 +514,7 @@ Usage:
   celctl cac test  <rule-dir> --cases cases.yaml    Unit-test against fixtures
   celctl cac test  <rule-dir> --mock name=data.json [--expect true|false]
   celctl cac live  <rule-dir>                        Evaluate against the cluster (kubectl)
+  celctl cac scaffold <rule-dir> [--from-cluster]    Generate cel/tests fixtures (real objects + provenance)
 
   celctl discover                                  kubectl api-resources
   celctl samples  <resource> [-n ns] [--max N]     Sample objects from cluster
