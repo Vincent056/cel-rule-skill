@@ -28,6 +28,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/ComplianceAsCode/compliance-sdk/pkg/scanner"
 	"gopkg.in/yaml.v3"
 )
 
@@ -177,10 +178,17 @@ func (in cacInput) normalizeBinding(raw interface{}) interface{} {
 	}
 }
 
-// isNoSuchKeyErr matches the eval error the compliance-sdk scanner special-cases:
-// a `no such key` error is reported as a FAIL result, not an execution error.
-func isNoSuchKeyErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no such key")
+// toSDKRule adapts a cac-content rule onto the SDK scanner interfaces.
+func (r *cacRule) toSDKRule() adhocRule {
+	inputs := make([]scanner.Input, 0, len(r.Inputs))
+	for _, in := range r.Inputs {
+		group, version := splitAPIVersion(in.Spec.APIVersion)
+		inputs = append(inputs, adhocInput{name: in.Name, spec: adhocInputSpec{
+			group: group, version: version, resource: in.Spec.Resource,
+			namespace: in.Spec.ResourceNamespace, name: in.Spec.ResourceName,
+		}})
+	}
+	return adhocRule{id: filepath.Base(r.dir), expr: r.Expression, inputs: inputs}
 }
 
 // listMisusePattern reports whether the expression applies a CEL macro directly
@@ -233,25 +241,38 @@ func cacLint(args []string) int {
 	for _, in := range rule.Inputs {
 		vars[in.Name] = in.emptyBinding()
 	}
-	_, err = evalExpr(rule.Expression, vars)
+	out, err := evalVars(rule.Expression, vars)
+	if err != nil {
+		return fail("%v", err)
+	}
 	switch {
-	case err == nil:
+	case out.pass() || (out.status == "FAIL" && !hasNoSuchKeyWarning(out.warnings)):
 		fmt.Printf("\nOK: compiles & evaluates (empty-cluster result is vacuous). Add fixtures with `cac test` for real coverage.\n")
 		return 0
-	case strings.HasPrefix(err.Error(), "compile:"):
-		fmt.Printf("\nLINT FAILED: %v\n", err)
-		return 1
-	case isNoSuchKeyErr(err):
+	case hasNoSuchKeyWarning(out.warnings):
 		// Deep field access on the empty skeleton. Legal in the operator: the
 		// scanner maps a `no such key` eval error to FAIL, not an error.
-		fmt.Printf("\nOK: compiles. WARNING: unguarded field access (%v): on a cluster where the field is\n", err)
+		fmt.Printf("\nOK: compiles. WARNING: unguarded field access (%s): on a cluster where the field is\n", firstNoSuchKeyWarning(out.warnings))
 		fmt.Println("   absent the scanner reports FAIL — add has() guards if absence should be compliant.")
 		fmt.Println("   Add fixtures with `cac test` for real coverage.")
 		return 0
 	default:
-		fmt.Printf("\nLINT FAILED: %v\n", err)
+		fmt.Printf("\nLINT FAILED: %s: %s\n", out.status, out.errMsg)
 		return 1
 	}
+}
+
+func hasNoSuchKeyWarning(warnings []string) bool {
+	return firstNoSuchKeyWarning(warnings) != ""
+}
+
+func firstNoSuchKeyWarning(warnings []string) string {
+	for _, w := range warnings {
+		if strings.Contains(w, "no such key") {
+			return w
+		}
+	}
+	return ""
 }
 
 // cacTest: evaluate against fixtures. Either inline --mock name=file (one shot,
@@ -294,15 +315,17 @@ func cacTest(args []string) int {
 	if err != nil {
 		return fail("%v", err)
 	}
-	got, err := evalExpr(rule.Expression, vars)
+	out, err := evalVars(rule.Expression, vars)
 	if err != nil {
-		if !isNoSuchKeyErr(err) {
-			return fail("%v", err)
-		}
-		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
-		fmt.Printf("WARNING: eval error %q — the scanner maps this to FAIL\n", err)
-		got = false
+		return fail("%v", err)
 	}
+	if out.status != "PASS" && out.status != "FAIL" {
+		return fail("%s: %s", out.status, out.errMsg)
+	}
+	if w := firstNoSuchKeyWarning(out.warnings); w != "" {
+		fmt.Printf("WARNING: %s (the scanner maps this to FAIL)\n", w)
+	}
+	got := out.pass()
 	fmt.Printf("%v\n", got)
 	if *expect != "" {
 		want := *expect == "true"
@@ -415,16 +438,19 @@ func runOneCase(rule *cacRule, c cacCase) bool {
 		}
 		vars[inName] = in.normalizeBinding(raw)
 	}
-	got, err := evalExpr(rule.Expression, vars)
+	out, err := evalVars(rule.Expression, vars)
 	if err != nil {
-		if !isNoSuchKeyErr(err) {
-			fmt.Printf("  FAIL %s — %v\n", name, err)
-			return false
-		}
-		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
-		fmt.Printf("  WARNING: %s — eval error %q; the scanner maps this to FAIL\n", name, err)
-		got = false
+		fmt.Printf("  FAIL %s — %v\n", name, err)
+		return false
 	}
+	if out.status != "PASS" && out.status != "FAIL" {
+		fmt.Printf("  FAIL %s — %s: %s\n", name, out.status, out.errMsg)
+		return false
+	}
+	if w := firstNoSuchKeyWarning(out.warnings); w != "" {
+		fmt.Printf("  WARNING: %s — %s (the scanner maps this to FAIL)\n", name, w)
+	}
+	got := out.pass()
 	if got == c.Expect {
 		fmt.Printf("  PASS %s — %v\n", name, got)
 		return true
@@ -445,24 +471,26 @@ func cacLive(args []string) int {
 	if err != nil {
 		return fail("%v", err)
 	}
-	vars := map[string]interface{}{}
-	for _, in := range rule.Inputs {
-		data, err := cacKubectlFetch(in.Spec)
-		if err != nil {
-			return fail("fetch %q: %v", in.Name, err)
-		}
-		vars[in.Name] = in.normalizeBinding(data)
-		fmt.Printf("  fetched %s (%s)\n", in.Name, describeBinding(vars[in.Name]))
-	}
-	got, err := evalExpr(rule.Expression, vars)
+	// Fetch and evaluate through the SDK scanner with its real Kubernetes
+	// fetcher — the exact code path the operator's cel-scanner uses.
+	fetcher, err := newKubeFetcher()
 	if err != nil {
-		if !isNoSuchKeyErr(err) {
-			return fail("%v", err)
-		}
-		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
-		fmt.Printf("  WARNING: eval error %q — the scanner maps this to FAIL\n", err)
-		got = false
+		return fail("%v", err)
 	}
+	for _, in := range rule.Inputs {
+		fmt.Printf("  fetching %s (%s/%s)\n", in.Name, in.Spec.APIVersion, in.Spec.Resource)
+	}
+	out, err := runRule(rule.toSDKRule(), fetcher)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if out.status != "PASS" && out.status != "FAIL" {
+		return fail("%s: %s", out.status, out.errMsg)
+	}
+	if w := firstNoSuchKeyWarning(out.warnings); w != "" {
+		fmt.Printf("  WARNING: %s (the scanner maps this to FAIL)\n", w)
+	}
+	got := out.pass()
 	if got {
 		fmt.Printf("\nPASS (compliant)\n")
 		return 0
