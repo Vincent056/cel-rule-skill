@@ -14,8 +14,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/google/cel-go/cel"
@@ -370,121 +368,6 @@ func cmdLive(args []string) int {
 
 // ----- rule library -----
 
-func cmdRule(args []string) int {
-	if len(args) == 0 {
-		return fail("rule subcommand required: list|get|add|test|remove")
-	}
-	sub, rest := args[0], args[1:]
-	fs := newFlags("rule " + sub)
-	dir := fs.String("dir", "./rules-library", "rule library directory")
-	switch sub {
-	case "list":
-		tag := fs.String("tag", "", "filter by tag")
-		category := fs.String("category", "", "filter by category")
-		search := fs.String("search", "", "free-text search over name/description/expression")
-		fs.Parse(reorderArgs(rest))
-		rules, err := loadLibrary(*dir)
-		if err != nil {
-			return fail("%v", err)
-		}
-		n := 0
-		for _, r := range rules {
-			if *category != "" && r.Category != *category {
-				continue
-			}
-			if *tag != "" && !contains(r.Tags, *tag) {
-				continue
-			}
-			if *search != "" && !matchesText(r, *search) {
-				continue
-			}
-			fmt.Printf("• %s  [%s]\n    id: %s  category=%s severity=%s tags=%v\n",
-				r.Name, short(r.Expression), r.ID, r.Category, r.Severity, r.Tags)
-			n++
-		}
-		fmt.Printf("\n%d rule(s)\n", n)
-		return 0
-	case "get":
-		fs.Parse(reorderArgs(rest))
-		id := fs.Arg(0)
-		if id == "" {
-			return fail("usage: celctl rule get <id>")
-		}
-		r, _, err := findRule(*dir, id)
-		if err != nil {
-			return fail("%v", err)
-		}
-		b, _ := json.MarshalIndent(r, "", "  ")
-		fmt.Println(string(b))
-		return 0
-	case "add":
-		file := fs.String("file", "", "rule JSON file to add (id assigned if missing)")
-		fs.Parse(reorderArgs(rest))
-		if *file == "" {
-			return fail("usage: celctl rule add --file rule.json")
-		}
-		var r Rule
-		if err := loadJSON(*file, &r); err != nil {
-			return fail("%v", err)
-		}
-		if r.Expression == "" || r.Name == "" {
-			return fail("rule needs at least name and expression")
-		}
-		if r.ID == "" {
-			r.ID = newID(r.Name)
-		}
-		// Refuse to save unless test cases pass (when present).
-		if len(r.TestCases) > 0 {
-			fmt.Println("Validating test cases before saving...")
-			if code := verifyRule(&r); code != 0 {
-				return fail("not saved: test cases failed")
-			}
-		}
-		if err := os.MkdirAll(*dir, 0o755); err != nil {
-			return fail("%v", err)
-		}
-		out := filepath.Join(*dir, r.ID+".json")
-		b, _ := json.MarshalIndent(r, "", "  ")
-		if err := os.WriteFile(out, b, 0o644); err != nil {
-			return fail("%v", err)
-		}
-		fmt.Printf("saved %s (id=%s)\n", out, r.ID)
-		return 0
-	case "test":
-		mode := fs.String("mode", "test_cases", "test_cases|live")
-		fs.Parse(reorderArgs(rest))
-		id := fs.Arg(0)
-		if id == "" {
-			return fail("usage: celctl rule test <id> [--mode test_cases|live]")
-		}
-		r, path, err := findRule(*dir, id)
-		if err != nil {
-			return fail("%v", err)
-		}
-		if *mode == "live" {
-			return cmdLive([]string{"--rule", path})
-		}
-		return verifyRule(r)
-	case "remove":
-		fs.Parse(reorderArgs(rest))
-		id := fs.Arg(0)
-		if id == "" {
-			return fail("usage: celctl rule remove <id>")
-		}
-		_, path, err := findRule(*dir, id)
-		if err != nil {
-			return fail("%v", err)
-		}
-		if err := os.Remove(path); err != nil {
-			return fail("%v", err)
-		}
-		fmt.Printf("removed %s\n", path)
-		return 0
-	default:
-		return fail("unknown rule subcommand: %s", sub)
-	}
-}
-
 // ----- discovery (thin kubectl wrappers) -----
 
 func cmdDiscover(args []string) int {
@@ -530,41 +413,6 @@ func cmdSamples(args []string) int {
 }
 
 // ----- helpers -----
-
-func verifyRule(r *Rule) int {
-	if len(r.TestCases) == 0 {
-		fmt.Println("(no test cases)")
-		return 0
-	}
-	pass := 0
-	for i, tc := range r.TestCases {
-		desc := tc.Description
-		if desc == "" {
-			desc = fmt.Sprintf("test case %d", i+1)
-		}
-		vars, err := decodeTestData(tc.TestData, r.Inputs)
-		if err != nil {
-			fmt.Printf("  ❌ %s — bad test data: %v\n", desc, err)
-			continue
-		}
-		got, err := evalExpr(r.Expression, vars)
-		if err != nil {
-			fmt.Printf("  ❌ %s — %v\n", desc, err)
-			continue
-		}
-		if got == tc.ExpectedResult {
-			pass++
-			fmt.Printf("  ✅ %s\n", desc)
-		} else {
-			fmt.Printf("  ❌ %s — got %v, expected %v\n", desc, got, tc.ExpectedResult)
-		}
-	}
-	fmt.Printf("%d/%d passed\n", pass, len(r.TestCases))
-	if pass != len(r.TestCases) {
-		return 1
-	}
-	return 0
-}
 
 func kubectlGet(k *KubernetesInput) (interface{}, error) {
 	res := k.Resource
@@ -628,96 +476,12 @@ func parseInputSpec(s string) (RuleInput, error) {
 	return RuleInput{Name: name, Kubernetes: k}, nil
 }
 
-func loadLibrary(dir string) ([]*Rule, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read library %s: %w", dir, err)
-	}
-	var rules []*Rule
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		var r Rule
-		if err := loadJSON(filepath.Join(dir, e.Name()), &r); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skip %s: %v\n", e.Name(), err)
-			continue
-		}
-		rules = append(rules, &r)
-	}
-	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
-	return rules, nil
-}
-
-func findRule(dir, id string) (*Rule, string, error) {
-	path := filepath.Join(dir, id+".json")
-	if _, err := os.Stat(path); err == nil {
-		var r Rule
-		if err := loadJSON(path, &r); err != nil {
-			return nil, "", err
-		}
-		return &r, path, nil
-	}
-	// Fall back to matching by id or name field inside files.
-	rules, err := loadLibrary(dir)
-	if err != nil {
-		return nil, "", err
-	}
-	for _, r := range rules {
-		if r.ID == id || r.Name == id {
-			return r, filepath.Join(dir, r.ID+".json"), nil
-		}
-	}
-	return nil, "", fmt.Errorf("rule %q not found in %s", id, dir)
-}
-
 func loadJSON(path string, v interface{}) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	return json.Unmarshal(b, v)
-}
-
-func matchesText(r *Rule, q string) bool {
-	q = strings.ToLower(q)
-	return strings.Contains(strings.ToLower(r.Name), q) ||
-		strings.Contains(strings.ToLower(r.Description), q) ||
-		strings.Contains(strings.ToLower(r.Expression), q)
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
-func short(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 60 {
-		return s[:57] + "..."
-	}
-	return s
-}
-
-func newID(name string) string {
-	slug := strings.ToLower(strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			return r
-		}
-		if r >= 'A' && r <= 'Z' {
-			return r + 32
-		}
-		return '-'
-	}, name))
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		slug = "rule"
-	}
-	return slug
 }
 
 // flag helpers
@@ -744,7 +508,6 @@ Usage:
   celctl eval     --expr '<cel>' --data v=v.json    Evaluate once, print bool
   celctl live     --rule rule.json                 Run against live cluster (kubectl)
   celctl live     --expr '<cel>' --input pods=v1/pods:default
-  celctl rule list|get|add|test|remove [--dir ./rules-library]
 
   ComplianceAsCode/content (cac-content) rules — operate on a rule dir or shared.yml:
   celctl cac lint  <rule-dir>                       Compile + empty-eval; catches list/.items bugs
@@ -773,8 +536,6 @@ func main() {
 		code = cmdEval(args)
 	case "live":
 		code = cmdLive(args)
-	case "rule":
-		code = cmdRule(args)
 	case "cac":
 		code = cmdCac(args)
 	case "discover":

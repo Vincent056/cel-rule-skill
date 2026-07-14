@@ -1,7 +1,7 @@
 # celctl reference — rule file format & commands
 
-`celctl` replaces the cel-rpc-server MCP server. The rule JSON format is **compatible**
-with cel-rpc-server's `rules-library/*.json`, so existing files work unchanged.
+`celctl` replaces the cel-rpc-server MCP server. Rules live in the ComplianceAsCode/content
+repo — see the `celctl cac` section; `verify`/`eval` accept ad-hoc rule/test files.
 
 ## Rule file format
 
@@ -44,7 +44,6 @@ Notes:
 - `test_data` values may be an **inline JSON object** (above) *or* a **JSON string**
   (cel-rpc-server's on-disk format, e.g. `"{\"items\":[...]}"`). celctl accepts both.
 - An input not present in a test case's `test_data` defaults to an empty List `{"items":[]}`.
-- `id` is optional for `rule add` (a slug is derived from `name` if omitted).
 
 ## verify — evaluate against test cases (no cluster)
 
@@ -104,21 +103,6 @@ binds the result, evaluates, and prints fetched counts + ✅ PASS / ❌ FAIL.
 celctl discover                              # kubectl api-resources --verbs=list -o wide
 celctl samples configmaps -n openshift-etcd --max 3   # real objects to model test data on
 ```
-
-## rule library
-
-```bash
-celctl rule list                             # default dir ./rules-library
-celctl rule list --dir /path/to/lib --category security --tag etcd --search certificate
-celctl rule get <id-or-name>
-celctl rule add --file myrule.json           # validates test cases, refuses to save on failure
-celctl rule test <id> --mode test_cases      # replay stored cases (default)
-celctl rule test <id> --mode live            # run saved rule against the cluster
-celctl rule remove <id>
-```
-
-`--dir` may appear before or after the positional id. The default library dir is
-`./rules-library`.
 
 ## cac-content rules (`celctl cac …`)
 

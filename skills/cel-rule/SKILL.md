@@ -1,14 +1,14 @@
 ---
 name: cel-rule
-description: Author, validate, run, and manage Kubernetes CEL compliance rules with the local celctl utility — no server required. Use when the user wants to write a CEL expression/rule, test it against sample data or a live cluster, lint/unit-test ComplianceAsCode/content (cac-content) cel/shared.yml rules, or add/list/test/remove rules in a local rule library.
+description: Author, validate, run, and manage Kubernetes CEL compliance rules with the local celctl utility — no server required. Use when the user wants to write a CEL expression/rule, test it against sample data or a live cluster, lint/unit-test ComplianceAsCode/content (cac-content) cel/shared.yml rules, or scaffold fixtures for new rules. Rules live in the cac-content repo.
 ---
 
 # CEL Rule
 
 End-to-end helper for **Common Expression Language (CEL)** rules that check Kubernetes
 resources. It drives **`celctl`**, a self-contained CLI in this repo that evaluates CEL
-locally with cel-go (the same engine the old `cel-rpc-server` used), runs rules against a
-live cluster via `kubectl`, and manages a file-based rule library.
+locally with cel-go (the same engine the old `cel-rpc-server` used), and runs rules against a
+live cluster via `kubectl`. Rules themselves live in the ComplianceAsCode/content repo.
 
 > **This replaces the cel-rpc-server MCP server.** No server, no container, no AI keys.
 > Everything is a local `celctl` invocation.
@@ -41,15 +41,11 @@ cluster you want to check).
 | `verify_cel_live_resources` | `celctl live --rule r.json` / `celctl live --expr '<cel>' --input name=[group/]version/resource[:ns]` |
 | `discover_resource_types` | `celctl discover` |
 | `get_resource_samples` | `celctl samples <resource> [-n ns] [--max N]` |
-| `add_rule` | `celctl rule add --file r.json` (auto-validates test cases before saving) |
-| `list_rules` | `celctl rule list [--category c] [--tag t] [--search text]` |
-| `get_rule` | `celctl rule get <id>` |
-| `test_rule` | `celctl rule test <id> [--mode test_cases\|live]` |
-| `remove_rule` | `celctl rule remove <id>` |
-| (cac-content rules) | `celctl cac lint\|test\|live <rule-dir>` — see Workflow D |
+| (cac-content rules) | `celctl cac lint\|test\|live <rule-dir>` — see Workflow C |
 
-The rule-library directory defaults to `./rules-library` (override with `--dir`). The rule
-JSON format is **compatible with cel-rpc-server's** files, so existing libraries work as-is.
+The old MCP rule-library tools (`add_rule`/`list_rules`/`get_rule`/`test_rule`/`remove_rule`)
+have no replacement by design: rules live in the ComplianceAsCode/content repo
+(`applications/<app>/<rule>/cel/shared.yml`) — use `celctl cac …` (Workflow C).
 
 ---
 
@@ -110,7 +106,7 @@ Use when the user wants to know whether the *actual* cluster is compliant. Requi
    (exit 0/1). If the result is surprising, `celctl samples` the resource and re-validate
    the expression in Workflow A against that real data before blaming the cluster.
 
-## Workflow D — Validate ComplianceAsCode/content (cac-content) rules
+## Workflow C — Validate ComplianceAsCode/content (cac-content) rules
 
 Use this when the rules live in the **cac-content** repo as
 `applications/<app>/<rule>/cel/shared.yml` (the shipping format for out-of-the-box
@@ -162,23 +158,6 @@ Binding semantics (critical — celctl mirrors the operator):
 Always `cac lint` first, then add fixtures and `cac test` for real true/false coverage,
 then optionally `cac live` to check an actual cluster.
 
-## Workflow C — Manage the rule library
-
-```bash
-celctl rule list --dir ./rules-library                 # browse / filter
-celctl rule list --category security --search network
-celctl rule get <id>                                   # full JSON
-celctl rule add --file myrule.json                     # validates test cases, then saves
-celctl rule test <id>                                  # replay stored test cases
-celctl rule test <id> --mode live                      # run saved rule vs cluster
-celctl rule remove <id>
-```
-
-- `rule add` **refuses to save** a rule whose test cases don't pass — so only validated
-  rules enter the library. Always author with test cases.
-- Before adding, `celctl rule list --search <keyword>` to check for a near-duplicate and
-  edit that file instead of creating a second copy.
-
 ---
 
 ## Guardrails
@@ -189,7 +168,6 @@ celctl rule remove <id>
 - Guard optional fields with `has(x.field)` before dereferencing — a missing map key or
   field raises an eval error (surfaced as ❌ for that case).
 - For `live`, the expression must be List-form; everything comes back wrapped in `items`.
-- Only `celctl rule add` rules that have already passed their test cases (it enforces this).
 
 See [references/cel-cookbook.md](references/cel-cookbook.md) for CEL syntax patterns and
 [references/examples.md](references/examples.md) for the rule-file format and every
