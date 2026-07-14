@@ -1,5 +1,11 @@
 # cel-rule-skill
 
+> **Status: upstreaming to compliance-operator.** celctl and the skill are being moved to
+> [`ComplianceAsCode/compliance-operator` `cmd/celctl`](https://github.com/ComplianceAsCode/compliance-operator/pull/1306)
+> so they reuse the operator's scanner engine directly. Once that merges, install with
+> `go install github.com/ComplianceAsCode/compliance-operator/cmd/celctl@latest` and this
+> repo becomes historical. Until then, this repo remains the released home (`celctl/v0.1.4`).
+
 A [Claude Code](https://claude.com/claude-code) skill **and** a self-contained CLI (`celctl`)
 for authoring, validating, and running **Kubernetes CEL compliance rules** — with
 **no server required**.
