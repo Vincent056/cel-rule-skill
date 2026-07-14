@@ -16,11 +16,11 @@ ComplianceAsCode/content repo (`applications/<app>/<rule>/cel/shared.yml`).
 celctl/                        # the utility (replaces the MCP server)
   main.go, cac.go              #   verify / eval / live / discover / samples / cac
   go.mod, go.sum
-skills/cel-rule/
-  SKILL.md                     # the skill: workflows for create / validate / run / manage
-  references/
-    cel-cookbook.md            #   CEL syntax patterns (verified against cel-go)
-    examples.md                #   rule-file format + every celctl command
+  skill/                       # the Claude Code skill, embedded in the binary
+    SKILL.md                   #   workflows for create / validate / run
+    references/
+      cel-cookbook.md          #   CEL syntax patterns (verified against cel-go)
+      examples.md              #   rule-file format + every celctl command
 scripts/
   build.sh                    # build (and optionally install) celctl
 ```
@@ -87,13 +87,28 @@ Local `verify`/`eval` need nothing else — no server, no container, no cluster,
 
 ### 2. Install the skill
 
-Point Claude Code at the skill — symlink it into your skills dir:
+The skill is embedded in the binary — one command installs it into
+`~/.claude/skills/cel-rule` (use `--dir` to override):
 
 ```bash
-ln -s "$PWD/skills/cel-rule" ~/.claude/skills/cel-rule
+celctl skill install
 ```
 
-…or add this repo as a plugin/marketplace source. Restart Claude Code to pick it up.
+Restart Claude Code to pick it up. `celctl skill status` shows the installed
+version vs the binary's.
+
+### Updating
+
+Both the tool and the skill update together:
+
+```bash
+go install github.com/Vincent056/cel-rule-skill/celctl@latest
+celctl skill install       # refreshes the managed skill directory in place
+```
+
+(Working from a clone instead? `ln -s "$PWD/celctl/skill" ~/.claude/skills/cel-rule`
+keeps the skill tracking your checkout; `skill install --force` replaces such a
+symlink with a managed copy.)
 
 ## Usage
 
@@ -117,6 +132,6 @@ celctl live --expr 'deployments.items.all(d, d.spec.replicas >= 2)' \
 ## Notes
 
 - CEL inputs are List-wrapped: iterate with `<var>.items.all(x, ...)` / `.exists(...)`.
-  See [references/cel-cookbook.md](skills/cel-rule/references/cel-cookbook.md).
+  See [references/cel-cookbook.md](celctl/skill/references/cel-cookbook.md).
 - Migrating from cel-rpc-server? The rule library is gone by design — port rules to
   cac-content format (`cel/shared.yml` + `cel/tests/`) and use `celctl cac …`.

@@ -517,6 +517,9 @@ Usage:
   celctl cac live  <rule-dir>                        Evaluate against the cluster (kubectl)
   celctl cac scaffold <rule-dir> [--from-cluster]    Generate cel/tests fixtures (real objects + provenance)
 
+  celctl skill install [--dir D] [--force]         Install the embedded Claude Code skill
+  celctl skill status                              Show installed vs binary skill version
+
   celctl discover                                  kubectl api-resources
   celctl samples  <resource> [-n ns] [--max N]     Sample objects from cluster
 
@@ -540,6 +543,8 @@ func main() {
 		code = cmdLive(args)
 	case "cac":
 		code = cmdCac(args)
+	case "skill":
+		code = cmdSkill(args)
 	case "discover":
 		code = cmdDiscover(args)
 	case "samples":
