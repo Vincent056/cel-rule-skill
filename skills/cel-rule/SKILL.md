@@ -130,8 +130,12 @@ Binding semantics (critical — celctl mirrors the operator):
    # lint a whole app dir:
    for d in applications/openshift-virtualization/*/; do celctl cac lint "$d"; done
    ```
-   A `❌ LINT FAILED: no such key` with the `.items` hint means a list input is being
-   iterated without `.items`. Fix the expression and re-lint.
+   A `❌ LINT FAILED: input "<name>" is a list … but the expression iterates it directly`
+   means a list input is being iterated without `.items`. Fix the expression and re-lint.
+   A `⚠️ unguarded field access` warning is not a failure — it means a missing field
+   would make the scanner report FAIL; add `has()` guards if absence should be compliant.
+   Note on semantics: `cac test`/`cac live` mirror the scanner — a `no such key` eval
+   error counts as **FAIL** (with a warning), not an execution error.
 
 2. **Unit test** with fixtures (no cluster). Write a cases file and run `cac test`:
    ```bash

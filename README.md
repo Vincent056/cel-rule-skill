@@ -80,6 +80,8 @@ only verified rules enter the library.
 ```bash
 ./scripts/build.sh --install     # builds and copies to ~/.local/bin
 # or just: cd celctl && go build -o celctl .
+# or, without cloning:
+go install github.com/Vincent056/cel-rule-skill/celctl@latest
 ```
 
 Live-cluster commands additionally need `kubectl` configured for the target cluster.

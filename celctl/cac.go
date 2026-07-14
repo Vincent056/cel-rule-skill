@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -153,18 +154,40 @@ func (in cacInput) normalizeBinding(raw interface{}) interface{} {
 		}
 		return raw
 	}
-	// List input -> {items: [...]}.
+	// List input -> full List object, as the scanner binds it.
 	switch v := raw.(type) {
 	case []interface{}:
-		return map[string]interface{}{"items": v}
+		return map[string]interface{}{"apiVersion": "v1", "kind": "List", "items": v}
 	case map[string]interface{}:
 		if _, ok := v["items"]; ok {
+			if _, ok := v["apiVersion"]; !ok {
+				v["apiVersion"] = "v1"
+			}
+			if _, ok := v["kind"]; !ok {
+				v["kind"] = "List"
+			}
 			return v // already a List wrapper
 		}
-		return map[string]interface{}{"items": []interface{}{v}} // single object -> wrap
+		// single object -> wrap
+		return map[string]interface{}{"apiVersion": "v1", "kind": "List", "items": []interface{}{v}}
 	default:
-		return map[string]interface{}{"items": []interface{}{}}
+		return map[string]interface{}{"apiVersion": "v1", "kind": "List", "items": []interface{}{}}
 	}
+}
+
+// isNoSuchKeyErr matches the eval error the compliance-sdk scanner special-cases:
+// a `no such key` error is reported as a FAIL result, not an execution error.
+func isNoSuchKeyErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such key")
+}
+
+// listMisusePattern reports whether the expression applies a CEL macro directly
+// to a list input variable (e.g. `vms.all(...)` instead of `vms.items.all(...)`).
+// The scanner binds list inputs as a List object, so the macro would iterate the
+// wrapper's map keys and error at runtime.
+func listMisusePattern(expression, inputName string) bool {
+	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(inputName) + `\.(all|exists|exists_one|filter|map)\s*\(`)
+	return re.MatchString(expression)
 }
 
 // cacLint: parse + compile + evaluate against empty bindings. This catches the
@@ -190,21 +213,43 @@ func cacLint(args []string) int {
 		fmt.Printf("  input %-12s %-40s %s\n", in.Name, in.Spec.APIVersion+"/"+in.Spec.Resource, kind)
 	}
 
+	// Hard failure: a CEL macro applied directly to a list input variable —
+	// the scanner binds list inputs as a List object, so this errors at runtime.
+	misused := false
+	for _, in := range rule.Inputs {
+		if in.Spec.ResourceName == "" && listMisusePattern(rule.Expression, in.Name) {
+			fmt.Printf("\n❌ LINT FAILED: input %q is a list (no resource_name) but the expression iterates it directly.\n", in.Name)
+			fmt.Printf("   Use %s.items.all(...) / .exists(...) / .filter(...), not %s.all(...).\n", in.Name, in.Name)
+			misused = true
+		}
+	}
+	if misused {
+		return 1
+	}
+
 	vars := map[string]interface{}{}
 	for _, in := range rule.Inputs {
 		vars[in.Name] = in.emptyBinding()
 	}
 	_, err = evalExpr(rule.Expression, vars)
-	if err != nil {
+	switch {
+	case err == nil:
+		fmt.Printf("\n✅ compiles & evaluates (empty-cluster result is vacuous). Add fixtures with `cac test` for real coverage.\n")
+		return 0
+	case strings.HasPrefix(err.Error(), "compile:"):
 		fmt.Printf("\n❌ LINT FAILED: %v\n", err)
-		if strings.Contains(err.Error(), "no such key") || strings.Contains(err.Error(), "no matching overload") {
-			fmt.Println("   Hint: a list input (no resource_name) is bound as {items:[...]}.")
-			fmt.Println("   Iterate it with <name>.items.all(...) / .exists(...) / .filter(...), not <name>.all(...).")
-		}
+		return 1
+	case isNoSuchKeyErr(err):
+		// Deep field access on the empty skeleton. Legal in the operator: the
+		// scanner maps a `no such key` eval error to FAIL, not an error.
+		fmt.Printf("\n✅ compiles. ⚠️  unguarded field access (%v): on a cluster where the field is\n", err)
+		fmt.Println("   absent the scanner reports FAIL — add has() guards if absence should be compliant.")
+		fmt.Println("   Add fixtures with `cac test` for real coverage.")
+		return 0
+	default:
+		fmt.Printf("\n❌ LINT FAILED: %v\n", err)
 		return 1
 	}
-	fmt.Printf("\n✅ compiles & evaluates (empty-cluster result is vacuous). Add fixtures with `cac test` for real coverage.\n")
-	return 0
 }
 
 // cacTest: evaluate against fixtures. Either inline --mock name=file (one shot,
@@ -249,7 +294,12 @@ func cacTest(args []string) int {
 	}
 	got, err := evalExpr(rule.Expression, vars)
 	if err != nil {
-		return fail("%v", err)
+		if !isNoSuchKeyErr(err) {
+			return fail("%v", err)
+		}
+		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
+		fmt.Printf("⚠️  eval error %q — the scanner maps this to FAIL\n", err)
+		got = false
 	}
 	fmt.Printf("%v\n", got)
 	if *expect != "" {
@@ -259,6 +309,7 @@ func cacTest(args []string) int {
 			return 1
 		}
 		fmt.Printf("✅ matches expected %v\n", want)
+		return 0
 	}
 	if !got {
 		return 1
@@ -337,29 +388,40 @@ func cacRunCases(rule *cacRule, cases []cacCase) int {
 }
 
 func runOneCase(rule *cacRule, c cacCase) bool {
+	name := c.Name
+	if name == "" {
+		name = "case"
+	}
 	byName := map[string]cacInput{}
+	inputNames := make([]string, 0, len(rule.Inputs))
 	for _, in := range rule.Inputs {
 		byName[in.Name] = in
+		inputNames = append(inputNames, in.Name)
 	}
 	vars := map[string]interface{}{}
 	for _, in := range rule.Inputs {
 		vars[in.Name] = in.emptyBinding()
 	}
-	for name, raw := range c.Inputs {
-		if in, ok := byName[name]; ok {
-			vars[name] = in.normalizeBinding(raw)
-		} else {
-			vars[name] = raw
+	for inName, raw := range c.Inputs {
+		in, ok := byName[inName]
+		if !ok {
+			// A typo'd input name would silently leave the real input empty and
+			// make the case vacuous — fail loudly instead.
+			fmt.Printf("  ❌ %s — fixture input %q matches no rule input (rule inputs: %s)\n",
+				name, inName, strings.Join(inputNames, ", "))
+			return false
 		}
-	}
-	name := c.Name
-	if name == "" {
-		name = "case"
+		vars[inName] = in.normalizeBinding(raw)
 	}
 	got, err := evalExpr(rule.Expression, vars)
 	if err != nil {
-		fmt.Printf("  ❌ %s — %v\n", name, err)
-		return false
+		if !isNoSuchKeyErr(err) {
+			fmt.Printf("  ❌ %s — %v\n", name, err)
+			return false
+		}
+		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
+		fmt.Printf("  ⚠️  %s — eval error %q; the scanner maps this to FAIL\n", name, err)
+		got = false
 	}
 	if got == c.Expect {
 		fmt.Printf("  ✅ %s — %v\n", name, got)
@@ -392,7 +454,12 @@ func cacLive(args []string) int {
 	}
 	got, err := evalExpr(rule.Expression, vars)
 	if err != nil {
-		return fail("%v", err)
+		if !isNoSuchKeyErr(err) {
+			return fail("%v", err)
+		}
+		// Scanner semantics: `no such key` evaluates to FAIL, not an error.
+		fmt.Printf("  ⚠️  eval error %q — the scanner maps this to FAIL\n", err)
+		got = false
 	}
 	if got {
 		fmt.Printf("\n✅ PASS (compliant)\n")
