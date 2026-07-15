@@ -18,36 +18,30 @@ ComplianceAsCode/content repo (`applications/<app>/<rule>/cel/shared.yml`).
 
 ## Install
 
-The Claude Code skill is embedded in the `celctl` binary — two commands install both:
-
 ```bash
 go install github.com/Vincent056/cel-rule-skill/celctl@latest
-celctl skill install        # writes the skill to ~/.claude/skills/cel-rule
 ```
 
-Restart Claude Code to pick the skill up. `celctl skill status` shows the installed
-skill version vs the binary's.
+The Claude Code skill lives in `celctl/skill/` as plain files. Install it by copying (or
+symlinking) the directory into your Claude Code skills dir — you or Claude can do this:
+
+```bash
+mkdir -p ~/.claude/skills
+cp -r celctl/skill ~/.claude/skills/cel-rule          # from a clone
+# or: ln -s "$PWD/celctl/skill" ~/.claude/skills/cel-rule   (tracks your checkout)
+```
+
+Restart Claude Code to pick the skill up.
 
 Live-cluster commands additionally need `kubectl` configured for the target cluster.
 Local `verify`/`eval`/`cac test` need nothing else — no server, no container, no AI keys.
 
 ### Updating
 
-Tool and skill update together; managed skill installs refresh in place:
-
 ```bash
-go install github.com/Vincent056/cel-rule-skill/celctl@latest
-celctl skill install
+go install github.com/Vincent056/cel-rule-skill/celctl@latest   # the tool
+git pull    # the skill, if you symlinked a clone; re-copy otherwise
 ```
-
-### Alternative: from a clone
-
-```bash
-./scripts/build.sh --install                        # build celctl to ~/.local/bin
-ln -s "$PWD/celctl/skill" ~/.claude/skills/cel-rule  # skill tracks your checkout
-```
-
-(`celctl skill install --force` replaces such a symlink with a managed copy.)
 
 ## celctl — the utility
 
@@ -119,7 +113,7 @@ celctl live --expr 'deployments.items.all(d, d.spec.replicas >= 2)' \
 ```
 celctl/                        # the utility (replaces the MCP server)
   main.go, cac.go              #   verify / eval / live / discover / samples / cac
-  scaffold.go, skill.go        #   fixture scaffolding, embedded-skill installer
+  scaffold.go                  #   fixture scaffolding
   skill/                       # the Claude Code skill, embedded in the binary
     SKILL.md                   #   workflows for create / validate / run
     references/

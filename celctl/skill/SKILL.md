@@ -25,9 +25,10 @@ go install github.com/Vincent056/cel-rule-skill/celctl@latest
 # (celctl is upstreaming to compliance-operator cmd/celctl; this path is the interim home)
 ```
 
-To update both the tool and this skill:
-`go install github.com/Vincent056/cel-rule-skill/celctl@latest && celctl skill install`.
-Live-cluster commands additionally require a kubeconfig (`KUBECONFIG` or in-cluster).
+To update the tool: `go install github.com/Vincent056/cel-rule-skill/celctl@latest`.
+The skill itself is installed by copying `celctl/skill` to `~/.claude/skills/cel-rule`
+(see the repo README). Live-cluster commands additionally require a kubeconfig
+(`KUBECONFIG` or in-cluster).
 
 ## Binding semantics (critical — celctl mirrors the operator)
 
